@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Force-Win — Ultra Shield</title>
+
+<style>
+:root{--bg:#071022;--fg:#eef;--muted:#9aa;--card:#071a2b;--ylw:#ffd60a;--grn:#7ef1a3;--red:#ff7a7a;--bdr:#234}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:Arial;padding:16px}
+.card{background:var(--card);padding:12px;border-radius:10px;border:2px solid var(--ylw);margin-bottom:10px}
+.highlight{color:var(--ylw);font-weight:700}
+.win{color:var(--grn);font-weight:700}
+.loss{color:var(--red);font-weight:700}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border:1px solid #234;padding:6px;text-align:center}
+</style>
+</head>
+
+<body>
+
+<h2>Force-Win — Ultra Shield (FINAL)</h2>
+
+<div class="card">
+<b>Prediction:</b>
+<div id="pred">—</div>
+<div>
+Primary: <span id="p">—</span><br>
+Backup: <span id="b">—</span><br>
+Tertiary: <span id="t">—</span>
+</div>
+</div>
+
+<div class="card">
+Stats: <span id="stats">W:0 L:0</span>
+</div>
+
+<table>
+<thead>
+<tr><th>Period</th><th>Pred</th><th>Actual</th><th>Result</th></tr>
+</thead>
+<tbody id="log"></tbody>
+</table>
+
+<script>
+
+const API="/api/results/30S";
+
+let s={
+  lastPeriod:null,
+  wins:0,
+  losses:0,
+  lossStreak:0,
+  skip:0,
+  primary:"—",
+  backup:"—",
+  tertiary:"—",
+  active:"—",
+  pending:null
+};
+
+function size(n){return n>=5?"Big":"Small";}
+
+// trend
+function trend(arr){
+  let b=0,sm=0;
+  arr.slice(0,50).forEach(n=>n>=5?b++:sm++);
+  return b>=sm?"Big":"Small";
+}
+
+// streak
+function streak(arr){
+  if(arr.length<3) return null;
+  let a=size(arr[0]),b=size(arr[1]),c=size(arr[2]);
+  if(a===b && b===c) return a==="Big"?"Small":"Big";
+  return null;
+}
+
+// zigzag
+function zigzag(arr){
+  if(arr.length<4) return null;
+  let a=size(arr[0]),b=size(arr[1]),c=size(arr[2]),d=size(arr[3]);
+  if(a!==b && b!==c && c!==d) return a==="Big"?"Small":"Big";
+  return null;
+}
+
+// ML dummy (same as original fallback)
+async function ml(arr){
+  return Math.random()>0.5?"Big":"Small";
+}
+
+// build plan (ORIGINAL LOGIC)
+async function build(arr){
+  let t=trend(arr);
+  let st=streak(arr);
+  let z=zigzag(arr);
+  let m=await ml(arr);
+
+  return {
+    primary:m,
+    backup:st||m==="Big"?"Small":"Big",
+    tertiary:z||t,
+    desc:"ML+Trend+Zigzag"
+  };
+}
+
+// backend fetch
+async function fetchData(){
+  const r=await fetch(API);
+  const j=await r.json();
+  let list=j?.data?.list||[];
+  let nums=list.map(x=>parseInt(x.number)).filter(n=>!isNaN(n));
+  return {nums,period:list[0]?.issueNumber};
+}
+
+// log
+function log(p,pr,ac,res){
+  let tr=document.createElement("tr");
+  tr.innerHTML=`
+  <td>${p}</td>
+  <td>${pr}</td>
+  <td>${ac}</td>
+  <td class="${res==='Win'?'win':'loss'}">${res}</td>`;
+  document.getElementById("log").prepend(tr);
+}
+
+// UI
+function ui(){
+  document.getElementById("p").innerText=s.primary;
+  document.getElementById("b").innerText=s.backup;
+  document.getElementById("t").innerText=s.tertiary;
+  document.getElementById("stats").innerText=`W:${s.wins} L:${s.losses}`;
+  document.getElementById("pred").innerHTML=`<span class="highlight">${s.active}</span>`;
+}
+
+// main
+async function tick(){
+  let {nums,period}=await fetchData();
+  if(!nums.length) return;
+
+  if(period!==s.lastPeriod){
+
+    if(s.active!=="—"){
+      let actual=size(nums[0]);
+      let res=s.active===actual?"Win":"Loss";
+
+      if(res==="Win"){s.wins++;s.lossStreak=0;}
+      else{s.losses++;s.lossStreak++;}
+
+      log(s.lastPeriod,s.primary,actual,res);
+    }
+
+    // skip logic
+    if(s.lossStreak>0 && s.skip<2){
+      s.skip++;
+      s.primary=s.backup=s.tertiary="—";
+      s.active="—";
+      ui();
+      s.lastPeriod=period;
+      return;
+    }
+
+    let plan=await build(nums);
+    s.primary=plan.primary;
+    s.backup=plan.backup;
+    s.tertiary=plan.tertiary;
+    s.active=s.primary;
+
+    s.skip=0;
+
+    ui();
+    s.lastPeriod=period;
+  }
+}
+
+setInterval(tick,3000);
+</script>
+
+</body>
+</html>
